@@ -3,7 +3,6 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import {
   Table,
   TableBody,
@@ -34,6 +33,8 @@ import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { Sale } from '@/types';
+import { formatCurrency } from '@/lib/currency';
+import { useNotifications } from '@/contexts/NotificationContext';
 
 export default function Sales() {
   const [sales, setSales] = useState<Sale[]>(initialSales);
@@ -42,7 +43,9 @@ export default function Sales() {
   const [formData, setFormData] = useState({
     productId: '',
     quantity: 1,
+    salePrice: 0, // Negotiated sale price
   });
+  const { addNotification } = useNotifications();
 
   const totalSales = sales.reduce((sum, s) => sum + s.totalAmount, 0);
   const totalProfit = sales.reduce((sum, s) => sum + s.profit, 0);
@@ -53,8 +56,14 @@ export default function Sales() {
     return product?.name.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
+  const selectedProduct = products.find(p => p.id === formData.productId);
+  const calculatedProfit = selectedProduct 
+    ? (formData.salePrice - selectedProduct.purchasePrice) * formData.quantity 
+    : 0;
+  const calculatedTotal = formData.salePrice * formData.quantity;
+
   const handleAdd = () => {
-    setFormData({ productId: products[0]?.id || '', quantity: 1 });
+    setFormData({ productId: products[0]?.id || '', quantity: 1, salePrice: 0 });
     setIsAddOpen(true);
   };
 
@@ -64,25 +73,45 @@ export default function Sales() {
       return;
     }
     
+    if (formData.salePrice <= 0) {
+      toast.error('Veuillez entrer le prix de vente négocié');
+      return;
+    }
+    
     const product = products.find(p => p.id === formData.productId);
     if (!product) {
       toast.error('Produit non trouvé');
       return;
     }
 
+    if (formData.quantity > product.quantity) {
+      toast.error(`Stock insuffisant. Disponible: ${product.quantity} ${product.unit}(s)`);
+      return;
+    }
+
+    const profit = (formData.salePrice - product.purchasePrice) * formData.quantity;
+    
     const newSale: Sale = {
       id: Date.now().toString(),
       productId: formData.productId,
       quantity: formData.quantity,
-      unitPrice: product.salePrice,
-      totalAmount: product.salePrice * formData.quantity,
-      profit: (product.salePrice - product.purchasePrice) * formData.quantity,
+      unitPrice: formData.salePrice,
+      totalAmount: formData.salePrice * formData.quantity,
+      profit: profit,
       date: new Date(),
     };
 
     setSales([newSale, ...sales]);
     setIsAddOpen(false);
-    toast.success(`Vente de ${formData.quantity} ${product.name} enregistrée`);
+    
+    // Update product quantity (in a real app, this would be in the database)
+    toast.success(`Vente de ${formData.quantity} ${product.name} enregistrée - Bénéfice: ${formatCurrency(profit)}`);
+    
+    addNotification({
+      title: 'Nouvelle vente',
+      message: `Vente de ${formData.quantity} ${product.name} pour ${formatCurrency(calculatedTotal)}`,
+      type: 'success',
+    });
   };
 
   return (
@@ -100,7 +129,7 @@ export default function Sales() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Ventes totales</p>
-                <p className="text-2xl font-bold text-foreground">{totalSales.toLocaleString()} €</p>
+                <p className="text-2xl font-bold text-foreground">{formatCurrency(totalSales)}</p>
               </div>
             </div>
           </Card>
@@ -111,7 +140,7 @@ export default function Sales() {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Bénéfice total</p>
-                <p className="text-2xl font-bold text-success">{totalProfit.toLocaleString()} €</p>
+                <p className="text-2xl font-bold text-success">{formatCurrency(totalProfit)}</p>
               </div>
             </div>
           </Card>
@@ -180,14 +209,14 @@ export default function Sales() {
                     </TableCell>
                     <TableCell className="text-right font-medium">{sale.quantity}</TableCell>
                     <TableCell className="text-right font-medium">
-                      {sale.unitPrice.toLocaleString()} €
+                      {formatCurrency(sale.unitPrice)}
                     </TableCell>
                     <TableCell className="text-right font-semibold text-foreground">
-                      {sale.totalAmount.toLocaleString()} €
+                      {formatCurrency(sale.totalAmount)}
                     </TableCell>
                     <TableCell className="text-right">
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success border border-success/30">
-                        +{sale.profit.toLocaleString()} €
+                        +{formatCurrency(sale.profit)}
                       </span>
                     </TableCell>
                   </TableRow>
@@ -204,7 +233,7 @@ export default function Sales() {
           <DialogHeader>
             <DialogTitle>Nouvelle vente</DialogTitle>
             <DialogDescription>
-              Enregistrez une nouvelle vente.
+              Sélectionnez un produit et entrez le prix négocié avec le client.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -220,36 +249,68 @@ export default function Sales() {
                 <SelectContent>
                   {products.map((product) => (
                     <SelectItem key={product.id} value={product.id}>
-                      {product.name} - {product.salePrice} €
+                      {product.name} - Stock: {product.quantity} {product.unit}(s)
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+            
+            {selectedProduct && (
+              <div className="rounded-lg bg-secondary/50 p-3">
+                <p className="text-sm text-muted-foreground">Prix d'achat:</p>
+                <p className="font-semibold">{formatCurrency(selectedProduct.purchasePrice)}</p>
+              </div>
+            )}
+            
             <div className="space-y-2">
               <Label htmlFor="quantity">Quantité</Label>
               <Input
                 id="quantity"
                 type="number"
                 min="1"
+                max={selectedProduct?.quantity || 999}
                 value={formData.quantity}
                 onChange={(e) => setFormData({ ...formData, quantity: Number(e.target.value) })}
               />
+              {selectedProduct && (
+                <p className="text-xs text-muted-foreground">
+                  Disponible: {selectedProduct.quantity} {selectedProduct.unit}(s)
+                </p>
+              )}
             </div>
-            {formData.productId && (
-              <div className="rounded-lg bg-secondary/50 p-4">
+            
+            <div className="space-y-2">
+              <Label htmlFor="salePrice">Prix de vente négocié (FCFA)</Label>
+              <Input
+                id="salePrice"
+                type="number"
+                min="0"
+                placeholder="Entrez le prix après négociation"
+                value={formData.salePrice || ''}
+                onChange={(e) => setFormData({ ...formData, salePrice: Number(e.target.value) })}
+              />
+            </div>
+            
+            {formData.productId && formData.salePrice > 0 && (
+              <div className="rounded-lg bg-secondary/50 p-4 space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Prix unitaire:</span>
-                  <span className="font-medium">
-                    {products.find(p => p.id === formData.productId)?.salePrice.toLocaleString()} €
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm mt-2">
                   <span className="text-muted-foreground">Total:</span>
                   <span className="font-bold text-foreground">
-                    {((products.find(p => p.id === formData.productId)?.salePrice || 0) * formData.quantity).toLocaleString()} €
+                    {formatCurrency(calculatedTotal)}
                   </span>
                 </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Bénéfice:</span>
+                  <span className={`font-bold ${calculatedProfit >= 0 ? 'text-success' : 'text-destructive'}`}>
+                    {calculatedProfit >= 0 ? '+' : ''}{formatCurrency(calculatedProfit)}
+                  </span>
+                </div>
+                {calculatedProfit < 0 && (
+                  <p className="text-xs text-destructive">
+                    ⚠️ Attention: Vous vendez à perte!
+                  </p>
+                )}
               </div>
             )}
           </div>

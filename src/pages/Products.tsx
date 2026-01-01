@@ -27,29 +27,42 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { products as initialProducts, categories } from '@/data/mockData';
-import { Plus, Search, Filter, Edit, Trash2 } from 'lucide-react';
+import { products as initialProducts } from '@/data/mockData';
+import { useCategories } from '@/contexts/CategoryContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { Plus, Search, Filter, Edit, Trash2, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Product } from '@/types';
+import { Product, Category } from '@/types';
+import { formatCurrency } from '@/lib/currency';
 
 export default function Products() {
+  const { categories, addCategory, updateCategory, deleteCategory } = useCategories();
+  const { currentUser } = useAuth();
+  const isAdmin = currentUser?.role === 'admin';
+  
   const [products, setProducts] = useState<Product[]>(initialProducts);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [isCategoryOpen, setIsCategoryOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     categoryId: '',
     purchasePrice: 0,
-    salePrice: 0,
     quantity: 0,
     minStock: 5,
     unit: 'pièce',
   });
+  const [categoryForm, setCategoryForm] = useState({
+    name: '',
+    description: '',
+    color: '#2DD4BF',
+  });
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
 
   const filteredProducts = products.filter((product) => {
     const matchesSearch = product.name
@@ -66,18 +79,11 @@ export default function Products() {
     return { label: 'En stock', variant: 'success' as const };
   };
 
-  const getProfit = (salePrice: number, purchasePrice: number) => {
-    const profit = salePrice - purchasePrice;
-    const margin = ((profit / purchasePrice) * 100).toFixed(1);
-    return { profit, margin };
-  };
-
   const handleAdd = () => {
     setFormData({
       name: '',
       categoryId: categories[0]?.id || '',
       purchasePrice: 0,
-      salePrice: 0,
       quantity: 0,
       minStock: 5,
       unit: 'pièce',
@@ -91,7 +97,6 @@ export default function Products() {
       name: product.name,
       categoryId: product.categoryId,
       purchasePrice: product.purchasePrice,
-      salePrice: product.salePrice,
       quantity: product.quantity,
       minStock: product.minStock,
       unit: product.unit,
@@ -127,7 +132,7 @@ export default function Products() {
       return;
     }
     setProducts(products.map(p =>
-      p.id === selectedProduct.id ? { ...p, ...formData } : p
+      p.id === selectedProduct.id ? { ...p, ...formData, updatedAt: new Date() } : p
     ));
     setIsEditOpen(false);
     toast.success(`Produit "${formData.name}" modifié avec succès`);
@@ -138,6 +143,46 @@ export default function Products() {
     setProducts(products.filter(p => p.id !== selectedProduct.id));
     setIsDeleteOpen(false);
     toast.success(`Produit "${selectedProduct.name}" supprimé`);
+  };
+
+  const handleAddCategory = () => {
+    if (!categoryForm.name) {
+      toast.error('Le nom de la catégorie est requis');
+      return;
+    }
+    if (editingCategory) {
+      updateCategory(editingCategory.id, categoryForm);
+      toast.success(`Catégorie "${categoryForm.name}" modifiée`);
+    } else {
+      addCategory({
+        id: Date.now().toString(),
+        ...categoryForm,
+      });
+      toast.success(`Catégorie "${categoryForm.name}" ajoutée`);
+    }
+    setCategoryForm({ name: '', description: '', color: '#2DD4BF' });
+    setEditingCategory(null);
+    setIsCategoryOpen(false);
+  };
+
+  const handleEditCategory = (category: Category) => {
+    setEditingCategory(category);
+    setCategoryForm({
+      name: category.name,
+      description: category.description || '',
+      color: category.color,
+    });
+    setIsCategoryOpen(true);
+  };
+
+  const handleDeleteCategory = (categoryId: string) => {
+    const hasProducts = products.some(p => p.categoryId === categoryId);
+    if (hasProducts) {
+      toast.error('Impossible de supprimer une catégorie contenant des produits');
+      return;
+    }
+    deleteCategory(categoryId);
+    toast.success('Catégorie supprimée');
   };
 
   return (
@@ -173,10 +218,22 @@ export default function Products() {
               </SelectContent>
             </Select>
           </div>
-          <Button variant="gradient" onClick={handleAdd}>
-            <Plus className="mr-2 h-4 w-4" />
-            Ajouter un produit
-          </Button>
+          <div className="flex gap-2">
+            {isAdmin && (
+              <Button variant="outline" onClick={() => {
+                setEditingCategory(null);
+                setCategoryForm({ name: '', description: '', color: '#2DD4BF' });
+                setIsCategoryOpen(true);
+              }}>
+                <Tag className="mr-2 h-4 w-4" />
+                Gérer catégories
+              </Button>
+            )}
+            <Button variant="gradient" onClick={handleAdd}>
+              <Plus className="mr-2 h-4 w-4" />
+              Ajouter un produit
+            </Button>
+          </div>
         </div>
 
         {/* Products Table */}
@@ -187,8 +244,6 @@ export default function Products() {
                 <TableHead className="font-semibold">Produit</TableHead>
                 <TableHead className="font-semibold">Catégorie</TableHead>
                 <TableHead className="font-semibold text-right">Prix d'achat</TableHead>
-                <TableHead className="font-semibold text-right">Prix de vente</TableHead>
-                <TableHead className="font-semibold text-right">Marge</TableHead>
                 <TableHead className="font-semibold text-right">Quantité</TableHead>
                 <TableHead className="font-semibold">Statut</TableHead>
                 <TableHead className="font-semibold text-right">Actions</TableHead>
@@ -198,7 +253,6 @@ export default function Products() {
               {filteredProducts.map((product) => {
                 const category = categories.find((c) => c.id === product.categoryId);
                 const status = getStockStatus(product.quantity, product.minStock);
-                const { profit, margin } = getProfit(product.salePrice, product.purchasePrice);
 
                 return (
                   <TableRow 
@@ -235,16 +289,7 @@ export default function Products() {
                       </span>
                     </TableCell>
                     <TableCell className="text-right font-medium">
-                      {product.purchasePrice.toLocaleString()} €
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {product.salePrice.toLocaleString()} €
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div>
-                        <p className="font-medium text-success">+{profit.toLocaleString()} €</p>
-                        <p className="text-xs text-muted-foreground">{margin}%</p>
-                      </div>
+                      {formatCurrency(product.purchasePrice)}
                     </TableCell>
                     <TableCell className="text-right font-medium">
                       {product.quantity} {product.unit}(s)
@@ -301,7 +346,7 @@ export default function Products() {
           <DialogHeader>
             <DialogTitle>Ajouter un produit</DialogTitle>
             <DialogDescription>
-              Ajoutez un nouveau produit à votre inventaire.
+              Ajoutez un nouveau produit à votre inventaire. Le prix de vente sera défini lors de la vente.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -332,25 +377,14 @@ export default function Products() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="purchasePrice">Prix d'achat (€)</Label>
-                <Input
-                  id="purchasePrice"
-                  type="number"
-                  value={formData.purchasePrice}
-                  onChange={(e) => setFormData({ ...formData, purchasePrice: Number(e.target.value) })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="salePrice">Prix de vente (€)</Label>
-                <Input
-                  id="salePrice"
-                  type="number"
-                  value={formData.salePrice}
-                  onChange={(e) => setFormData({ ...formData, salePrice: Number(e.target.value) })}
-                />
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="purchasePrice">Prix d'achat (FCFA)</Label>
+              <Input
+                id="purchasePrice"
+                type="number"
+                value={formData.purchasePrice}
+                onChange={(e) => setFormData({ ...formData, purchasePrice: Number(e.target.value) })}
+              />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -420,25 +454,14 @@ export default function Products() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="edit-purchasePrice">Prix d'achat (€)</Label>
-                <Input
-                  id="edit-purchasePrice"
-                  type="number"
-                  value={formData.purchasePrice}
-                  onChange={(e) => setFormData({ ...formData, purchasePrice: Number(e.target.value) })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-salePrice">Prix de vente (€)</Label>
-                <Input
-                  id="edit-salePrice"
-                  type="number"
-                  value={formData.salePrice}
-                  onChange={(e) => setFormData({ ...formData, salePrice: Number(e.target.value) })}
-                />
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-purchasePrice">Prix d'achat (FCFA)</Label>
+              <Input
+                id="edit-purchasePrice"
+                type="number"
+                value={formData.purchasePrice}
+                onChange={(e) => setFormData({ ...formData, purchasePrice: Number(e.target.value) })}
+              />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -474,9 +497,9 @@ export default function Products() {
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Supprimer le produit</DialogTitle>
+            <DialogTitle>Confirmer la suppression</DialogTitle>
             <DialogDescription>
               Êtes-vous sûr de vouloir supprimer "{selectedProduct?.name}" ? Cette action est irréversible.
             </DialogDescription>
@@ -487,6 +510,97 @@ export default function Products() {
             </Button>
             <Button variant="destructive" onClick={confirmDelete}>
               Supprimer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Category Management Dialog */}
+      <Dialog open={isCategoryOpen} onOpenChange={setIsCategoryOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {editingCategory ? 'Modifier la catégorie' : 'Gérer les catégories'}
+            </DialogTitle>
+            <DialogDescription>
+              {editingCategory 
+                ? 'Modifiez les informations de la catégorie' 
+                : 'Ajoutez ou modifiez vos catégories de produits'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="cat-name">Nom de la catégorie</Label>
+              <Input
+                id="cat-name"
+                placeholder="Ex: Électronique"
+                value={categoryForm.name}
+                onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cat-desc">Description</Label>
+              <Input
+                id="cat-desc"
+                placeholder="Ex: Appareils et accessoires"
+                value={categoryForm.description}
+                onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cat-color">Couleur</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="cat-color"
+                  type="color"
+                  value={categoryForm.color}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, color: e.target.value })}
+                  className="w-16 h-10 p-1"
+                />
+                <Input
+                  value={categoryForm.color}
+                  onChange={(e) => setCategoryForm({ ...categoryForm, color: e.target.value })}
+                  className="flex-1"
+                />
+              </div>
+            </div>
+            
+            {!editingCategory && categories.length > 0 && (
+              <div className="pt-4 border-t">
+                <Label className="text-sm text-muted-foreground mb-2 block">Catégories existantes</Label>
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  {categories.map((cat) => (
+                    <div key={cat.id} className="flex items-center justify-between p-2 rounded-lg bg-secondary/50">
+                      <div className="flex items-center gap-2">
+                        <div 
+                          className="h-4 w-4 rounded"
+                          style={{ backgroundColor: cat.color }}
+                        />
+                        <span className="text-sm font-medium">{cat.name}</span>
+                      </div>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEditCategory(cat)}>
+                          <Edit className="h-3 w-3" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDeleteCategory(cat.id)}>
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setIsCategoryOpen(false);
+              setEditingCategory(null);
+            }}>
+              {editingCategory ? 'Annuler' : 'Fermer'}
+            </Button>
+            <Button variant="gradient" onClick={handleAddCategory}>
+              {editingCategory ? 'Enregistrer' : 'Ajouter catégorie'}
             </Button>
           </DialogFooter>
         </DialogContent>
