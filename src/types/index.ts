@@ -5,12 +5,12 @@ export interface Category {
   color: string;
 }
 
+// Product no longer has salePrice - price is negotiated during sale
 export interface Product {
   id: string;
   name: string;
   categoryId: string;
   purchasePrice: number;
-  salePrice: number;
   quantity: number;
   minStock: number;
   unit: string;
@@ -22,9 +22,9 @@ export interface Sale {
   id: string;
   productId: string;
   quantity: number;
-  unitPrice: number;
+  unitPrice: number; // This is the negotiated sale price
   totalAmount: number;
-  profit: number;
+  profit: number; // Calculated as (unitPrice - purchasePrice) * quantity
   date: Date;
   employeeId?: string;
 }
